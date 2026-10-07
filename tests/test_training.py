@@ -97,8 +97,8 @@ def test_distillation_training_pipeline_end_to_end():
         metrics_file = tmp_path / "experiment_output" / "logs" / "distill_run_metrics.json"
         assert metrics_file.is_file()
 
-        # 7. Assert generation smoke test completed
-        assert len(results["sample_generations"]) == 2
+        # 7. Assert generation evaluation completed on all 3 prompts
+        assert len(results["sample_generations"]) == 3
         for gen in results["sample_generations"]:
             assert "prompt" in gen
             assert "response" in gen

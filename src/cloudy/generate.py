@@ -28,7 +28,7 @@ def format_inference_prompt(prompt: str, tokenizer: CloudyTokenizer) -> torch.Te
 
 
 @torch.no_grad()
-def generate_response(
+def generate_response_with_details(
     model: CloudyForCausalLM,
     tokenizer: CloudyTokenizer,
     prompt: str,
@@ -36,8 +36,8 @@ def generate_response(
     temperature: float = 0.7,
     top_k: int = 20,
     device: Optional[torch.device] = None,
-) -> str:
-    """Generates assistant response for a given instruction prompt."""
+) -> dict:
+    """Generates assistant response with termination metadata."""
     if device is None:
         device = next(model.parameters()).device
 
@@ -47,6 +47,8 @@ def generate_response(
 
     curr_ids = input_ids.clone()
     stop_tokens = {RESP_END_ID, EOS_TOKEN_ID}
+    terminated_by_stop = False
+    stop_token_id = None
 
     for _ in range(max_new_tokens):
         if curr_ids.shape[1] >= model.config.max_seq_len:
@@ -68,10 +70,42 @@ def generate_response(
 
         token_id = next_token.item()
         if token_id in stop_tokens:
+            terminated_by_stop = True
+            stop_token_id = token_id
             break
 
         curr_ids = torch.cat([curr_ids, next_token], dim=1)
 
-    # Extract response portion
     generated_tokens = curr_ids[0, prompt_len:].tolist()
-    return tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+    text = tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+    return {
+        "text": text,
+        "token_ids": generated_tokens,
+        "terminated_by_stop": terminated_by_stop,
+        "stop_token_id": stop_token_id,
+        "stop_token_name": "[/RESP]" if stop_token_id == RESP_END_ID else ("</s>" if stop_token_id == EOS_TOKEN_ID else None),
+    }
+
+
+@torch.no_grad()
+def generate_response(
+    model: CloudyForCausalLM,
+    tokenizer: CloudyTokenizer,
+    prompt: str,
+    max_new_tokens: int = 64,
+    temperature: float = 0.7,
+    top_k: int = 20,
+    device: Optional[torch.device] = None,
+) -> str:
+    """Generates assistant response for a given instruction prompt."""
+    details = generate_response_with_details(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=prompt,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_k=top_k,
+        device=device,
+    )
+    return details["text"]
+

@@ -134,3 +134,41 @@ def test_teacher_distillation_dataset_interface():
     assert "attention_mask" in item
     assert "labels" in item
     assert dataset.get_summary()["total_examples"] == 2
+
+
+def test_pipeline_verification_all_eight_checks(tmp_path):
+    import json
+    from scripts.verify_data_pipeline import run_pipeline_verification
+
+    data_file = tmp_path / "pilot_3.jsonl"
+    records = [
+        {
+            "id": "ex1",
+            "messages": [
+                {"role": "user", "content": "Explain what a variable is in Python using a simple example."},
+                {"role": "assistant", "content": "A variable is a named storage container for holding data."},
+            ],
+        },
+        {
+            "id": "ex2",
+            "messages": [
+                {"role": "user", "content": "Why should programmers write small, focused functions?"},
+                {"role": "assistant", "content": "Small functions are easier to test, read, and maintain."},
+            ],
+        },
+        {
+            "id": "ex3",
+            "messages": [
+                {"role": "user", "content": "Explain the difference between a list and a tuple in Python."},
+                {"role": "assistant", "content": "Lists are mutable while tuples are fixed and immutable."},
+            ],
+        },
+    ]
+    with data_file.open("w", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(r) + "\n")
+
+    # Run verification with Mock tokenizer (tokenizer_path=None)
+    passed = run_pipeline_verification(str(data_file), tokenizer_path=None, max_seq_len=64)
+    assert passed is True
+

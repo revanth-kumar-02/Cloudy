@@ -208,25 +208,52 @@ def train_distillation(
         filename="cloudy_student_distill_final.pt",
     )
 
-    # 6. Generation Smoke Test
+    # 6. Generation Evaluation on All 3 Prompts
     test_prompts = [
         "Explain what a variable is in Python using a simple example.",
         "Why should programmers write small, focused functions?",
+        "Explain the difference between a list and a tuple in Python.",
     ]
-    sample_generations: List[Dict[str, str]] = []
-    logger.info("--- Generation Evaluation ---")
+    sample_generations: List[Dict[str, Any]] = []
+    logger.info("--- Generation Evaluation on All 3 Prompts ---")
     for pr in test_prompts:
-        response_text = generate_response(student, tokenizer, pr, max_new_tokens=32, device=device)
-        sample_generations.append({"prompt": pr, "response": response_text})
+        # 1. Greedy response (temperature=0.0)
+        greedy_text = generate_response(student, tokenizer, pr, max_new_tokens=48, temperature=0.0, device=device)
+        # 2. Sampled response (temperature=0.7, top_k=20)
+        sampled_text = generate_response(student, tokenizer, pr, max_new_tokens=48, temperature=0.7, top_k=20, device=device)
+
+        # 3. Top 10 tokens after [RESP]
+        from cloudy.generate import format_inference_prompt
+        inf_input = format_inference_prompt(pr, tokenizer).to(device)
+        with torch.no_grad():
+            inf_logits, _ = student(inf_input)
+            probs = torch.softmax(inf_logits[0, -1, :], dim=-1)
+            top10_probs, top10_ids = torch.topk(probs, 10)
+
+        top10_list = []
+        for tid, p in zip(top10_ids.tolist(), top10_probs.tolist()):
+            tok_str = tokenizer.decode([tid])
+            top10_list.append({"token_id": tid, "prob": round(p, 4), "token": tok_str})
+
+        sample_generations.append({
+            "prompt": pr,
+            "response": greedy_text,
+            "greedy_response": greedy_text,
+            "sampled_response": sampled_text,
+            "top10_first_tokens": top10_list,
+        })
         logger.info(f"Prompt: {pr}")
-        logger.info(f"Response: {response_text}")
+        logger.info(f"Greedy Response: {greedy_text}")
+        logger.info(f"Top-1 Token at [RESP]: ID {top10_list[0]['token_id']} ({top10_list[0]['prob']:.1%}) -> {repr(top10_list[0]['token'])}")
 
     # 7. Write Run Metrics Log
     metrics_log_path = logs_dir / "distill_run_metrics.json"
+    total_supervised_tokens = sum((c.labels != -100).sum().item() for c in dataset.chunks)
     run_summary = {
         "project": config.project_name,
         "experiment": config.experiment_name,
         "total_steps": step,
+        "total_supervised_tokens": total_supervised_tokens,
         "initial_loss": round(initial_loss, 4),
         "final_loss": round(final_loss, 4),
         "loss_reduction": round(initial_loss - final_loss, 4),
