@@ -65,33 +65,67 @@ def format_and_chunk_example(
             f"Prompt {example_id} length ({prompt_len}) exceeds available max_seq_len ({max_seq_len})."
         )
 
-    chunk_capacity = max_seq_len - prompt_len
     chunks: List[DistillSampleChunk] = []
 
-    for i in range(0, len(full_resp_ids), chunk_capacity):
-        resp_chunk = full_resp_ids[i : i + chunk_capacity]
-        seq_input_ids = base_prompt_ids + resp_chunk
-        # Prompt tokens are masked with -100
-        seq_labels = [-100] * len(base_prompt_ids) + resp_chunk
-        seq_attention_mask = [1] * len(seq_input_ids)
+    # First chunk contains full prompt up to [RESP] and first slice of response
+    first_chunk_capacity = max_seq_len - prompt_len
+    first_resp_slice = full_resp_ids[:first_chunk_capacity]
 
-        # Apply padding if requested
-        if pad_to_max_len and len(seq_input_ids) < max_seq_len:
-            pad_len = max_seq_len - len(seq_input_ids)
-            seq_input_ids += [PAD_TOKEN_ID] * pad_len
-            seq_labels += [-100] * pad_len
-            seq_attention_mask += [0] * pad_len
+    first_input_ids = base_prompt_ids + first_resp_slice
+    first_labels = [-100] * len(base_prompt_ids) + first_resp_slice
+    first_mask = [1] * len(first_input_ids)
+
+    if pad_to_max_len and len(first_input_ids) < max_seq_len:
+        pad_len = max_seq_len - len(first_input_ids)
+        first_input_ids += [PAD_TOKEN_ID] * pad_len
+        first_labels += [-100] * pad_len
+        first_mask += [0] * pad_len
+
+    chunks.append(
+        DistillSampleChunk(
+            input_ids=torch.tensor(first_input_ids, dtype=torch.long),
+            attention_mask=torch.tensor(first_mask, dtype=torch.long),
+            labels=torch.tensor(first_labels, dtype=torch.long),
+            unpadded_length=len(base_prompt_ids) + len(first_resp_slice),
+            example_id=example_id,
+            chunk_idx=0,
+        )
+    )
+
+    # Subsequent continuation chunks: continue response with preceding context, NEVER re-attaching [RESP]
+    current_idx = first_chunk_capacity
+    while current_idx < len(full_resp_ids):
+        # Allow up to half the window for continuation response tokens, remaining for preceding context
+        target_slice_len = min(max_seq_len // 2, len(full_resp_ids) - current_idx)
+        resp_slice = full_resp_ids[current_idx : current_idx + target_slice_len]
+
+        # Context tokens preceding this slice (BOS + preceding tokens)
+        context_cap = max_seq_len - len(resp_slice) - 1  # -1 for BOS
+        context_len = min(context_cap, current_idx)
+        context_slice = full_resp_ids[current_idx - context_len : current_idx]
+
+        cont_input_ids = [BOS_TOKEN_ID] + context_slice + resp_slice
+        # Mask BOS and preceding context tokens so only continuation tokens are supervised
+        cont_labels = [-100] * (1 + len(context_slice)) + resp_slice
+        cont_mask = [1] * len(cont_input_ids)
+
+        if pad_to_max_len and len(cont_input_ids) < max_seq_len:
+            pad_len = max_seq_len - len(cont_input_ids)
+            cont_input_ids += [PAD_TOKEN_ID] * pad_len
+            cont_labels += [-100] * pad_len
+            cont_mask += [0] * pad_len
 
         chunks.append(
             DistillSampleChunk(
-                input_ids=torch.tensor(seq_input_ids, dtype=torch.long),
-                attention_mask=torch.tensor(seq_attention_mask, dtype=torch.long),
-                labels=torch.tensor(seq_labels, dtype=torch.long),
-                unpadded_length=len(base_prompt_ids) + len(resp_chunk),
+                input_ids=torch.tensor(cont_input_ids, dtype=torch.long),
+                attention_mask=torch.tensor(cont_mask, dtype=torch.long),
+                labels=torch.tensor(cont_labels, dtype=torch.long),
+                unpadded_length=1 + len(context_slice) + len(resp_slice),
                 example_id=example_id,
                 chunk_idx=len(chunks),
             )
         )
+        current_idx += target_slice_len
 
     stats = {
         "example_id": example_id,

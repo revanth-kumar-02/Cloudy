@@ -85,7 +85,7 @@ def audit_checkpoint(
     model.eval()
     print(f"[OK] Restored Cloudy student ({sum(p.numel() for p in model.parameters()):,} parameters)")
 
-    # 6. Evaluate Loss on the 3 Teacher Demonstrations
+    # 6. Evaluate Loss on the 3 Teacher Demonstrations with Token Accounting
     dataset = TeacherDistillationDataset(
         data_path_or_records=data_file,
         tokenizer=tokenizer,
@@ -95,23 +95,41 @@ def audit_checkpoint(
     dataloader = create_distillation_dataloader(dataset, batch_size=1, shuffle=False)
     summary = dataset.get_summary()
 
+    total_supervised_tokens = sum((c.labels != -100).sum().item() for c in dataset.chunks)
     eval_results = evaluate_model(model, dataloader, device)
     print("\n--- Quantitative Audit on Teacher Dataset ---")
-    print(f"Demonstrations:     {summary['total_examples']}")
-    print(f"Training Chunks:    {summary['total_training_chunks']}")
-    print(f"Audited Loss:       {eval_results['eval_loss']:.4f}")
-    print(f"Audited Perplexity: {eval_results['perplexity']:.2f}")
+    print(f"Demonstrations:           {summary['total_examples']}")
+    print(f"Training Chunks:          {summary['total_training_chunks']}")
+    print(f"Supervised Tokens:        {total_supervised_tokens:,}")
+    print(f"Audited Loss (Chunk-avg): {eval_results['eval_loss']:.4f}")
+    print(f"Audited Perplexity:       {eval_results['perplexity']:.2f}")
 
-    # 7. Deterministic Generation for All 3 Prompts
+    # 7. Next-Token Prediction & Generation Audit
     prompts = [
         "Explain what a variable is in Python using a simple example.",
         "Why should programmers write small, focused functions?",
         "Explain the difference between a list and a tuple in Python.",
     ]
 
-    print("\n--- Deterministic Generation Audit (Seed: 42) ---")
+    print("\n--- Generation & First-Token Probability Audit ---")
     for idx, pr in enumerate(prompts, start=1):
         print(f"\n[Prompt {idx}]: {pr}")
+
+        # Inspect top 10 probabilities at first response token (immediately after [RESP])
+        from cloudy.generate import format_inference_prompt
+        import torch.nn.functional as F
+
+        input_ids = format_inference_prompt(pr, tokenizer).to(device)
+        with torch.no_grad():
+            logits, _ = model(input_ids)
+            next_logits = logits[0, -1, :]
+            probs = F.softmax(next_logits, dim=-1)
+            top10_probs, top10_ids = torch.topk(probs, 10)
+
+        print("  Top 10 predicted tokens after [RESP]:")
+        for rank, (tid, prob) in enumerate(zip(top10_ids.tolist(), top10_probs.tolist()), start=1):
+            tok_str = tokenizer.decode([tid])
+            print(f"    #{rank:02d}: ID {tid:5d} ({prob:6.2%}) -> {repr(tok_str)}")
 
         # Greedy Decoding (temperature=0.0)
         set_seed(seed)
@@ -124,7 +142,7 @@ def audit_checkpoint(
             device=device,
         )
         print(f"  Greedy (temp=0.0):")
-        print(f"    {greedy_resp if greedy_resp else '<EMPTY_OUTPUT>'}")
+        print(f"    {repr(greedy_resp) if greedy_resp else '<EMPTY_OUTPUT>'}")
 
         # Sampled Decoding (temperature=0.7, top_k=20)
         set_seed(seed)
@@ -138,7 +156,7 @@ def audit_checkpoint(
             device=device,
         )
         print(f"  Sampled (temp=0.7, top_k=20):")
-        print(f"    {sampled_resp if sampled_resp else '<EMPTY_OUTPUT>'}")
+        print(f"    {repr(sampled_resp) if sampled_resp else '<EMPTY_OUTPUT>'}")
 
     print("\n" + "=" * 65)
     print("✅ AUDIT COMPLETE — No files or checkpoints were modified.")
