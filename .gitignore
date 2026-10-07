@@ -1,0 +1,39 @@
+# Environment and Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Data & Datasets (never commit to git)
+data/
+*.jsonl
+*.parquet
+*.arrow
+tokenizer/
+
+# Model Checkpoints & Weights
+checkpoints/
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.litertlm
+
+# Logs, Metrics & Experiments
+logs/
+experiments/
+wandb/
+*.log
+
+# Jupyter & Editor
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# Secrets & Local Configurations
+.env
+*.env
+*.pem
+*.key

@@ -1,0 +1,42 @@
+{
+  "project_name": "Cloudy",
+  "experiment_name": "pretrain_v1",
+  "seed": 42,
+  "model": {
+    "architecture": "decoder_only_transformer",
+    "vocab_size": 32000,
+    "d_model": 128,
+    "n_heads": 4,
+    "n_layers": 2,
+    "d_ff": 512,
+    "max_seq_len": 128,
+    "dropout": 0.0
+  },
+  "data": {
+    "train_file": "/content/drive/MyDrive/scratch_llm_1b/data/corpora/fineweb_edu_split_v1/train.jsonl",
+    "validation_file": "/content/drive/MyDrive/scratch_llm_1b/data/corpora/fineweb_edu_split_v1/validation.jsonl",
+    "tokenizer_file": "/content/drive/MyDrive/scratch_llm_1b/tokenizer/v2/tokenizer.json",
+    "sequence_length": 128
+  },
+  "training": {
+    "batch_size": 1,
+    "gradient_accumulation_steps": 8,
+    "learning_rate": 0.0001,
+    "weight_decay": 0.01,
+    "max_grad_norm": 1.0,
+    "warmup_steps": 100,
+    "max_steps": 1000,
+    "validation_interval": 100,
+    "checkpoint_interval": 100,
+    "mixed_precision": false
+  },
+  "runtime": {
+    "preferred_device": "cpu",
+    "cpu_fallback": true
+  },
+  "checkpoints": {
+    "directory": "/content/drive/MyDrive/scratch_llm_1b/checkpoints/cloudy_pretrain_v1",
+    "save_optimizer": true,
+    "resume_enabled": true
+  }
+}
